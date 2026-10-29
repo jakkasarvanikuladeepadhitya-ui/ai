@@ -1,4 +1,5 @@
-import os,subprocess,threading,time,uuid
+import os,shutil,subprocess,threading,uuid
+from pathlib import Path
 from .. import config
 from ..schemas.models import JobStatus
 from ..services.storyboard import build_storyboard
@@ -9,15 +10,18 @@ def submit(req):
     threading.Thread(target=_run,args=(jid,req),daemon=True).start(); return jid
 def _set(jid,**kw): _jobs[jid]=_jobs[jid].model_copy(update=kw)
 
-def _hf_clip(prompt,out):
-    from huggingface_hub import InferenceClient
-    token=os.getenv("HF_TOKEN")
-    if not token: raise RuntimeError("HF_TOKEN is not configured")
-    model=os.getenv("HF_VIDEO_MODEL","Wan-AI/Wan2.2-TI2V-5B")
-    provider=os.getenv("HF_VIDEO_PROVIDER","fal-ai")
-    client=InferenceClient(provider=provider,api_key=token)
-    data=client.text_to_video(prompt,model=model)
-    out.write_bytes(data)
+def _free_space_clip(prompt,out,aspect,duration):
+    from gradio_client import Client
+    space=os.getenv("HF_SPACE","alexcheng0072/wan27-free-video-generator")
+    token=os.getenv("HF_TOKEN") or None
+    client=Client(space,token=token)
+    ratio={"16:9":"832x480","9:16":"480x832","1:1":"640x640"}.get(aspect,"832x480")
+    seconds=max(2,min(5,int(round(float(duration)))))
+    result=client.predict(None,prompt[:600],ratio,seconds,api_name="/generate_video")
+    video=result[0] if isinstance(result,(list,tuple)) else result
+    if isinstance(video,dict): video=video.get("path") or video.get("video")
+    if not video: raise RuntimeError("Free ZeroGPU Space returned no video")
+    shutil.copyfile(str(video),str(out))
 
 def _mock_clip(prompt,out,w,h,duration):
     hue=sum(map(ord,prompt))%360
@@ -31,10 +35,10 @@ def _run(jid,req):
         scenes=req.scenes or build_storyboard(req.prompt,req.style,req.duration,req.smart_script)[0]
         config.apply_quality(req.quality); w,h=config.out_size(req.aspect_ratio); clips=[]
         for i,s in enumerate(scenes):
-            _set(jid,stage="clips",progress=10+int(55*i/max(1,len(scenes))),message=f"Creating AI scene {i+1}/{len(scenes)}",scenes_state=["done" if x<i else "running" if x==i else "pending" for x in range(len(scenes))])
+            _set(jid,stage="clips",progress=10+int(55*i/max(1,len(scenes))),message=f"Free ZeroGPU scene {i+1}/{len(scenes)}",scenes_state=["done" if x<i else "running" if x==i else "pending" for x in range(len(scenes))])
             out=config.CLIPS/f"{jid}_{i}.mp4"
-            if config.VIDEO_PROVIDER=="huggingface":
-                _hf_clip(s.visual_prompt,out)
+            if config.VIDEO_PROVIDER=="hf_space":
+                _free_space_clip(s.visual_prompt,out,req.aspect_ratio,s.duration)
             else:
                 _mock_clip(s.visual_prompt,out,w,h,s.duration)
             clips.append(out)
