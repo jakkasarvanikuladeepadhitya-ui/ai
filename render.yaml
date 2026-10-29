@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: reelwright
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: VIDEO_PROVIDER
+        value: mock
+      - key: STORYBOARD_ENGINE
+        value: rules
+      - key: NARRATION_ENGINE
+        value: espeak
+      - key: MUSIC_FILE
+        value: auto
+      - key: HW_ENCODE
+        value: off
